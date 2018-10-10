@@ -1,0 +1,10 @@
+[package]
+name = "client"
+version = "0.1.0"
+authors = ["Antti Salonen <ajsalonen@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+yew = { git = "https://github.com/DenisKolodin/yew", features = ["toml", "yaml", "msgpack", "cbor"] }
+failure = "0.1.2"
+stdweb = "0.4.0"
