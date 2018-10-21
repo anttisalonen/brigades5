@@ -35,6 +35,7 @@ enum Msg {
 	ReceivedText(Result<String, Error>),             // data received from server
 	Received(ds::ServerMsg),          // data received from server
 	ReceivedError(String),
+	SendGameMsg(ds::GameMsg),
 }
 
 fn text_to_gamemsg(text: &String) -> Option<ds::GameMsg> {
@@ -101,22 +102,13 @@ impl From<yew::format::Text> for InputData {
 	}
 }
 
-/*
-fn parse_msg<T: std::io::Read>(data: T) -> Msg {
-	let mut de = Deserializer::new(data);
-	let msg = Deserialize::deserialize(&mut de);
-	match msg {
-		Ok(m)  => { Msg::Received(m) }
-		Err(e) => { Msg::ReceivedError(e.to_string()) }
-	}
-}
-*/
-
 impl Component for Model {
 	type Message = Msg;
 	type Properties = ();
 
-	fn create(_: Self::Properties, link: ComponentLink<Self>) -> Self {
+	fn create(_: Self::Properties, mut link: ComponentLink<Self>) -> Self {
+		link.send_self(Msg::Connect);
+
 		Model {
 			console: ConsoleService::new(),
 			ws: None,
@@ -138,7 +130,9 @@ impl Component for Model {
 						WebSocketStatus::Closed | WebSocketStatus::Error => {
 							Msg::Disconnected
 						}
-						_ => Msg::Ignore,
+						WebSocketStatus::Opened => {
+							Msg::SendGameMsg(ds::GameMsg::QueryStatus)
+						}
 					}
 				});
 				if self.ws.is_none() {
@@ -160,7 +154,7 @@ impl Component for Model {
 				self.text = e; // note input box value
 				if self.text.len() > 0 {
 					if self.text.chars().last().unwrap() == '\n' {
-						self.link.send_back(|_: String| Msg::SendText);
+						self.link.send_self(Msg::SendText);
 					}
 				}
 				true
@@ -170,8 +164,6 @@ impl Component for Model {
 					Some(ref mut task) => {
 						match text_to_gamemsg(&self.text) {
 							Some(msg) => {
-								let mut buf = Vec::new();
-								msg.serialize(&mut Serializer::new(&mut buf)).unwrap();
 								task.send_binary(MsgPack(&msg));
 							}
 							None => {
@@ -192,10 +184,28 @@ impl Component for Model {
 			}
 			Msg::Received(m) => {
 				self.server_data.push_str(&format!("{:?}\n", &m));
+				match m {
+					ds::ServerMsg::AvailableSoldiers(s) => {
+						if s.len() > 0 {
+							self.link.send_self(Msg::SendGameMsg(
+									ds::GameMsg::TakeControl(s[0])));
+						}
+					}
+					_ => ()
+				}
 				true
 			}
 			Msg::ReceivedError(e) => {
 				self.server_data.push_str(&format!("Error when reading data from server: {}\n", e));
+				true
+			},
+			Msg::SendGameMsg(msg) => {
+				match self.ws {
+					Some(ref mut w) => {
+						w.send_binary(MsgPack(&msg));
+					}
+					None => ()
+				}
 				true
 			}
 		}
