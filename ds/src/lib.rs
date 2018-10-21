@@ -18,6 +18,13 @@ pub struct Speed {
 }
 
 impl Position {
+	pub fn new(a: f64, b: f64) -> Position {
+		Position {
+			x: a,
+			y: b,
+		}
+	}
+
 	pub fn dist(&self, pos: &Position) -> f64 {
 		((self.x - pos.x) * (self.x - pos.x) +
 		 (self.y - pos.y) * (self.y - pos.y)).sqrt()
@@ -63,5 +70,6 @@ pub enum ServerMsg {
 	AvailableSoldiers(Vec<SoldierID>),
 	YouNowHaveControl(SoldierID),
 	YourPosition(SoldierID, Position),
+	SoldierSeen(Vec<(SoldierID, Position)>),
 }
 

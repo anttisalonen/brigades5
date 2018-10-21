@@ -91,6 +91,65 @@ impl GameState {
 			.map(|p| p.id)
 			.collect()
 	}
+
+	fn get_soldier_mut(&mut self, sid: ds::SoldierID) -> Option<&mut Soldier> {
+		for s in &mut self.soldiers {
+			if s.id == sid {
+				return Some(&mut *s);
+			}
+		}
+		None
+	}
+
+	fn update_soldier<F>(&mut self, sid: ds::SoldierID, action: F)
+		where F: Fn(&mut Soldier) {
+			for s in &mut self.soldiers {
+				if s.id == sid {
+					action(&mut *s);
+					return;
+				}
+			}
+		}
+
+	fn try_take_control(&mut self, sid: ds::SoldierID, from: &Addr<MyWebSocket>) -> bool {
+		match self.get_soldier_mut(sid) {
+			Some(s) => {
+				if s.is_available() {
+					s.controller = Some(from.to_owned());
+					from.do_send(ServerMsg {
+						msg: ds::ServerMsg::YouNowHaveControl(sid)
+					});
+					true
+				} else {
+					false
+				}
+			}
+			None => false
+		}
+	}
+
+	fn handle_take_control(&mut self, sid: ds::SoldierID, from: &Addr<MyWebSocket>) {
+		let os = self.try_take_control(sid, &from);
+		match os {
+			true => {
+				for ref s in &self.soldiers {
+					if s.id == sid {
+						let c = s.controller.as_ref().unwrap();
+						let seen = self.current_percepts(&s);
+						from.do_send(ServerMsg {
+							msg: ds::ServerMsg::SoldierSeen(seen)
+						});
+						break;
+					}
+				}
+			}
+			false => ()
+		}
+	}
+
+	fn current_percepts(&self, s: &Soldier) -> Vec<(ds::SoldierID, ds::Position)> {
+		vec![]
+	}
 }
 
 struct SessionState {
@@ -293,15 +352,7 @@ impl Handler<GameMsg> for ChatServer {
 				});
 			}
 			ds::GameMsg::TakeControl(sid) => {
-				for ref mut s in &mut self.game.soldiers {
-					if s.id == sid && s.is_available() {
-						s.controller = Some(msg.from.to_owned());
-						msg.from.do_send(ServerMsg {
-							msg: ds::ServerMsg::YouNowHaveControl(sid)
-						});
-						break;
-					}
-				}
+				self.game.handle_take_control(sid, &msg.from);
 			}
 			ds::GameMsg::QueryStatus => {
 				let val = ds::ServerMsg::AvailableSoldiers(self.game.available_soldiers());

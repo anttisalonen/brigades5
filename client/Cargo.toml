@@ -8,3 +8,7 @@ edition = "2018"
 yew = { git = "https://github.com/DenisKolodin/yew", features = ["toml", "yaml", "msgpack", "cbor"] }
 failure = "0.1.2"
 stdweb = "0.4.0"
+serde = "*"
+serde_derive = "*"
+rmp-serde = "*"
+ds = { path = "../ds" }

@@ -2,15 +2,20 @@
 extern crate yew;
 extern crate failure;
 extern crate stdweb;
+extern crate serde_derive;
+extern crate rmp_serde;
+
+extern crate ds;
 
 use failure::Error;
 
-use stdweb::*;
-
 use yew::prelude::*;
-use yew::format::Json;
+use yew::format::{Json, MsgPack};
 use yew::services::ConsoleService;
 use yew::services::websocket::{WebSocketService, WebSocketStatus, WebSocketTask};
+
+use serde::{Deserialize, Serialize};
+use rmp_serde::{Deserializer, Serializer};
 
 struct Model {
 	console: ConsoleService,
@@ -22,13 +27,90 @@ struct Model {
 }
 
 enum Msg {
-	Connect,                         // connect to websocket server
-	Disconnected,                    // disconnected from server
-	Ignore,                          // ignore this message
-	TextInput(String),               // text was input in the input box
-	SendText,                        // send our text to server
-	Received(Result<String, Error>), // data received from server
+	Connect,                          // connect to websocket server
+	Disconnected,                     // disconnected from server
+	Ignore,                           // ignore this message
+	TextInput(String),                // text was input in the input box
+	SendText,                         // send our text to server
+	ReceivedText(Result<String, Error>),             // data received from server
+	Received(ds::ServerMsg),          // data received from server
+	ReceivedError(String),
 }
+
+fn text_to_gamemsg(text: &String) -> Option<ds::GameMsg> {
+	let spl: Vec<&str> = text.split(" ").collect();
+	match spl[0] {
+		"/init" => {
+			spl.get(1)
+				.and_then(|s| s.parse().ok())
+				.and_then(|n| Some(ds::GameMsg::Init(n)))
+		}
+		"/control" => {
+			spl.get(1)
+				.and_then(|s| s.parse().ok())
+				.and_then(|n| Some(ds::GameMsg::TakeControl(ds::SoldierID(n))))
+		}
+		"/query" => {
+			Some(ds::GameMsg::QueryStatus)
+		}
+		"/move" => {
+			let vc = spl.get(1..4);
+			match vc {
+				Some([s1, s2, s3]) => {
+					let n1 = s1.parse().ok();
+					let n2 = s2.parse().ok();
+					let n3 = s3.parse().ok();
+					n1.and_then(|n1| n2
+						    .and_then(|n2| n3
+							      .and_then(|n3| Some(ds::GameMsg::MoveTo(ds::SoldierID(n1),
+							      ds::Position::new(n2, n3))))))
+				}
+				_ => None
+			}
+
+		}
+		_ => None
+	}
+}
+
+struct InputData {
+	msg: Msg
+}
+
+impl From<yew::format::Binary> for InputData {
+	fn from(data: yew::format::Binary) -> InputData {
+		match data {
+			Ok(d) => {
+				let mut de = Deserializer::new(&d[..]);
+				let msg = Deserialize::deserialize(&mut de);
+				match msg {
+					Ok(m)  => { InputData { msg: Msg::Received(m) } }
+					Err(e) => { InputData { msg: Msg::ReceivedError(e.to_string()) } }
+				}
+			}
+			Err(d) => {
+				InputData { msg: Msg::ReceivedError(d.to_string()) }
+			}
+		}
+	}
+}
+
+impl From<yew::format::Text> for InputData {
+	fn from(data: yew::format::Text) -> InputData {
+		InputData { msg: Msg::ReceivedText(data) }
+	}
+}
+
+/*
+fn parse_msg<T: std::io::Read>(data: T) -> Msg {
+	let mut de = Deserializer::new(data);
+	let msg = Deserialize::deserialize(&mut de);
+	match msg {
+		Ok(m)  => { Msg::Received(m) }
+		Err(e) => { Msg::ReceivedError(e.to_string()) }
+	}
+}
+*/
 
 impl Component for Model {
 	type Message = Msg;
@@ -49,7 +131,7 @@ impl Component for Model {
 		match msg {
 			Msg::Connect => {
 				self.console.log("Connecting");
-				let cbout = self.link.send_back(|Json(data)| Msg::Received(data));
+				let cbout = self.link.send_back(|data: InputData| data.msg);
 				let cbnot = self.link.send_back(|input| {
 					ConsoleService::new().log(&format!("Notification: {:?}", input));
 					match input {
@@ -60,9 +142,8 @@ impl Component for Model {
 					}
 				});
 				if self.ws.is_none() {
-					let url = js! {
-						return "ws://" + location.host + "/ws/";
-					}.into_string().unwrap();
+					let url = format!("ws://{}/ws/",
+							  stdweb::web::document().location().unwrap().host().unwrap());
 					let task = self.wss.connect(&url, cbout, cbnot.into());
 					self.ws = Some(task);
 				}
@@ -77,12 +158,26 @@ impl Component for Model {
 			}
 			Msg::TextInput(e) => {
 				self.text = e; // note input box value
+				if self.text.len() > 0 {
+					if self.text.chars().last().unwrap() == '\n' {
+						self.link.send_back(|_: String| Msg::SendText);
+					}
+				}
 				true
 			}
 			Msg::SendText => {
 				match self.ws {
 					Some(ref mut task) => {
-						task.send(Json(&self.text));
+						match text_to_gamemsg(&self.text) {
+							Some(msg) => {
+								let mut buf = Vec::new();
+								msg.serialize(&mut Serializer::new(&mut buf)).unwrap();
+								task.send_binary(MsgPack(&msg));
+							}
+							None => {
+								task.send(Json(&self.text));
+							}
+						}
 						self.text = "".to_string();
 						true // clear input box
 					}
@@ -91,12 +186,16 @@ impl Component for Model {
 					}
 				}
 			}
-			Msg::Received(Ok(s)) => {
-				self.server_data.push_str(&format!("{}\n", &s));
+			Msg::ReceivedText(m) => {
+				self.server_data.push_str(&format!("{:?}\n", &m));
 				true
 			}
-			Msg::Received(Err(s)) => {
-				self.server_data.push_str(&format!("Error when reading data from server: {}\n", &s.to_string()));
+			Msg::Received(m) => {
+				self.server_data.push_str(&format!("{:?}\n", &m));
+				true
+			}
+			Msg::ReceivedError(e) => {
+				self.server_data.push_str(&format!("Error when reading data from server: {}\n", e));
 				true
 			}
 		}
@@ -113,7 +212,7 @@ impl Renderable<Model> for Model {
 			// input box for sending text
 			<p><input type="text", value=&self.text, oninput=|e| Msg::TextInput(e.value),></input></p><br/>
 			// button for sending text
-			<p><button onclick=|_| Msg::SendText,>{ "Send" }</button></p><br/>
+			<p><button type="button", onclick=|_| Msg::SendText,>{ "Send" }</button></p><br/>
 			// text area for showing data from the server
 			<p><textarea rows=8, value=&self.server_data,></textarea></p><br/>
 		}

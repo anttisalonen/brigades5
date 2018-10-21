@@ -11,15 +11,16 @@ use ws::{connect, CloseCode};
 use serde::{Deserialize, Serialize};
 use rmp_serde::{Deserializer, Serializer};
 
-enum State {
-	Init,
-	Done
+struct Agent {
+	sid: ds::SoldierID,
+	pos: ds::Position,
+	seen: Vec<(ds::SoldierID, ds::Position)>,
 }
+
 
 struct Client {
 	out: ws::Sender,
-	state: State,
-	sid: Option<ds::SoldierID>,
+	agents: Vec<Agent>,
 }
 
 impl Client {
@@ -27,6 +28,25 @@ impl Client {
 		let mut buf = Vec::new();
 		msg.serialize(&mut Serializer::new(&mut buf)).unwrap();
 		self.out.send(buf)
+	}
+
+	fn get_agent_mut(&mut self, sid: ds::SoldierID) -> Option<&mut Agent> {
+		for a in &mut self.agents {
+			if a.sid == sid {
+				return Some(&mut *a);
+			}
+		}
+		None
+	}
+
+	fn update_agent<F>(&mut self, sid: ds::SoldierID, action: F)
+		where F: Fn(&mut Agent) -> () {
+		for a in &mut self.agents {
+			if a.sid == sid {
+				action(&mut *a);
+				return;
+			}
+		}
 	}
 }
 
@@ -63,14 +83,21 @@ impl ws::Handler for Client {
 						}
 					}
 					Ok(ds::ServerMsg::YouNowHaveControl(sid)) => {
-						self.sid = Some(sid);
-						self.send(ds::GameMsg::MoveTo(self.sid.unwrap(),
+						self.agents.push(Agent {
+							sid: sid,
+							pos: ds::Position::new(0.0, 0.0),
+							seen: vec![],
+						});
+						self.send(ds::GameMsg::MoveTo(sid,
 									      ds::Position {
 										      x: 5.0,
 										      y: 0.0
 									      }))
 					}
 					Ok(ds::ServerMsg::YourPosition(sid, pos)) => {
+						self.update_agent(sid, |a| {
+							a.pos = pos;
+						});
 						if pos.dist(&ds::Position {
 							x: 5.0,
 							y: 0.0
@@ -79,6 +106,9 @@ impl ws::Handler for Client {
 						} else {
 							std::result::Result::Ok(())
 						}
+					}
+					Ok(ds::ServerMsg::SoldierSeen(ss)) => {
+						Ok(())
 					}
 					Err(e) => {
 						println!("Error: {:?}\n", e);
@@ -93,7 +123,6 @@ impl ws::Handler for Client {
 fn main() {
 	connect("ws://127.0.0.1:8080/ws/", |out| Client {
 		out: out,
-		state: State::Init,
-		sid: None,
+		agents: vec![],
 	}).unwrap()
 }
