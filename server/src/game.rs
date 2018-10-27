@@ -136,8 +136,8 @@ impl GameState {
 		}
 	}
 
-	fn current_percepts(&self, _s: &Soldier) -> Vec<(ds::SoldierID, ds::Position)> {
-		vec![]
+	fn current_percepts(&self, s: &Soldier) -> Vec<(ds::SoldierID, ds::Position)> {
+		vec![(s.id, s.pos)]
 	}
 
 	pub fn tick(&mut self, dur: Duration) -> Vec<(Addr<MyWebSocket>, ds::ServerMsg)> {

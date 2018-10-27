@@ -3,7 +3,7 @@ extern crate serde;
 extern crate serde_derive;
 extern crate rmp_serde;
 
-#[derive(PartialEq, Eq, Copy, Clone, Debug, Deserialize, Serialize)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, Hash, Deserialize, Serialize)]
 pub struct SoldierID(pub u32);
 
 #[derive(PartialEq, Copy, Clone, Debug, Deserialize, Serialize)]

@@ -7,6 +7,10 @@ extern crate rmp_serde;
 
 extern crate ds;
 
+use std::collections::HashMap;
+use stdweb::*;
+use stdweb::web::INonElementParentNode;
+use stdweb::unstable::TryInto;
 use failure::Error;
 
 use yew::prelude::*;
@@ -14,7 +18,7 @@ use yew::format::{Json, MsgPack};
 use yew::services::ConsoleService;
 use yew::services::websocket::{WebSocketService, WebSocketStatus, WebSocketTask};
 
-use serde::{Deserialize, Serialize};
+use ::serde::{Deserialize, Serialize};
 use rmp_serde::{Deserializer, Serializer};
 
 struct Model {
@@ -24,12 +28,15 @@ struct Model {
 	link: ComponentLink<Model>,
 	text: String,                    // text in our input box
 	server_data: String,             // data received from the server
+	canvas: stdweb::web::html_element::CanvasElement,
+	canvas_dimensions: (f64, f64),
+	ctx: stdweb::web::CanvasRenderingContext2d,
+	seen: HashMap<ds::SoldierID, ds::Position>,
 }
 
 enum Msg {
 	Connect,                          // connect to websocket server
 	Disconnected,                     // disconnected from server
-	Ignore,                           // ignore this message
 	TextInput(String),                // text was input in the input box
 	SendText,                         // send our text to server
 	ReceivedText(Result<String, Error>),             // data received from server
@@ -102,12 +109,58 @@ impl From<yew::format::Text> for InputData {
 	}
 }
 
+impl Model {
+	fn setup_canvas(&mut self) {
+		let canv: stdweb::web::html_element::CanvasElement = 
+			stdweb::web::document()
+			.get_element_by_id("viewport")
+			.unwrap()
+			.try_into()
+			.unwrap();
+		let ct: stdweb::web::CanvasRenderingContext2d =
+			canv.get_context().unwrap();
+		let client_width: u64 = js! {
+			let el = document.getElementById("main");
+			return el.clientWidth;
+		}.try_into().unwrap();
+		let client_height: u64 = js! {
+			let el = document.getElementById("main");
+			return el.clientHeight;
+		}.try_into().unwrap();
+		canv.set_width(client_width as u32);
+		canv.set_height(client_height as u32);
+		self.canvas = canv;
+		self.ctx = ct;
+		self.canvas_dimensions = (client_width as f64, client_height as f64);
+	}
+
+	fn update_canvas(&self) {
+		self.ctx.set_fill_style_color("black");
+		self.ctx.fill_rect(0.0, 0.0,
+				   self.canvas.width().into(),
+				   self.canvas.height().into());
+		self.ctx.set_fill_style_color("green");
+		let canv = self.canvas_dimensions.0.min(
+			self.canvas_dimensions.1);
+		let width = canv * 0.05;
+		for (_, pos) in &self.seen {
+			let xp = pos.x / 100.0 * canv * 0.5 + canv * 0.5;
+			let yp = pos.y / 100.0 * canv * 0.5 + canv * 0.5;
+			self.ctx.fill_rect(xp, yp, width, width);
+		}
+	}
+}
+
 impl Component for Model {
 	type Message = Msg;
 	type Properties = ();
 
 	fn create(_: Self::Properties, mut link: ComponentLink<Self>) -> Self {
 		link.send_self(Msg::Connect);
+		let canv: stdweb::web::html_element::CanvasElement = 
+			stdweb::web::document()
+			.create_element("canvas").unwrap().try_into().unwrap();
+		let ct = canv.get_context().unwrap();
 
 		Model {
 			console: ConsoleService::new(),
@@ -116,6 +169,10 @@ impl Component for Model {
 			link: link,
 			text: String::new(),
 			server_data: String::new(),
+			canvas: canv,
+			canvas_dimensions: (1.0, 1.0),
+			ctx: ct,
+			seen: HashMap::new(),
 		}
 	}
 
@@ -140,15 +197,13 @@ impl Component for Model {
 							  stdweb::web::document().location().unwrap().host().unwrap());
 					let task = self.wss.connect(&url, cbout, cbnot.into());
 					self.ws = Some(task);
+					self.setup_canvas();
 				}
 				true
 			}
 			Msg::Disconnected => {
 				self.ws = None;
 				true
-			}
-			Msg::Ignore => {
-				false
 			}
 			Msg::TextInput(e) => {
 				self.text = e; // note input box value
@@ -183,17 +238,31 @@ impl Component for Model {
 				true
 			}
 			Msg::Received(m) => {
-				self.server_data.push_str(&format!("{:?}\n", &m));
 				match m {
 					ds::ServerMsg::AvailableSoldiers(s) => {
 						if s.len() > 0 {
 							self.link.send_self(Msg::SendGameMsg(
 									ds::GameMsg::TakeControl(s[0])));
 						}
+						true
 					}
-					_ => ()
+					ds::ServerMsg::SoldierSeen(v) => {
+						for (sid, pos) in v {
+							self.seen.insert(sid, pos);
+						}
+						self.update_canvas();
+						false
+					}
+					ds::ServerMsg::YourPosition(sid, pos) => {
+						self.seen.insert(sid, pos);
+						self.update_canvas();
+						false
+					}
+					_ => {
+						self.server_data.push_str(&format!("{:?}\n", &m));
+						true
+					}
 				}
-				true
 			}
 			Msg::ReceivedError(e) => {
 				self.server_data.push_str(&format!("Error when reading data from server: {}\n", e));
@@ -215,8 +284,8 @@ impl Component for Model {
 impl Renderable<Model> for Model {
 	fn view(&self) -> Html<Self> {
 		html! {
-			// connect button
-			<p><button onclick=|_| Msg::Connect,>{ "Connect" }</button></p><br/>
+			<div id="main",>
+			<canvas id="viewport",></canvas><br/>
 			// text showing whether we're connected or not
 			<p>{ "Connected: " } { !self.ws.is_none() } </p><br/>
 			// input box for sending text
@@ -225,6 +294,7 @@ impl Renderable<Model> for Model {
 			<p><button type="button", onclick=|_| Msg::SendText,>{ "Send" }</button></p><br/>
 			// text area for showing data from the server
 			<p><textarea rows=8, value=&self.server_data,></textarea></p><br/>
+			</div>
 		}
 	}
 }
