@@ -3,8 +3,10 @@ extern crate serde;
 extern crate serde_derive;
 extern crate rmp_serde;
 
+use std::collections::HashMap;
+
 #[derive(PartialEq, Eq, Copy, Clone, Debug, Hash, Deserialize, Serialize)]
-pub struct SoldierID(pub u32);
+pub struct SoldierID(pub i32);
 
 #[derive(PartialEq, Copy, Clone, Debug, Deserialize, Serialize)]
 pub struct Position {
@@ -58,18 +60,66 @@ impl Position {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum GameMsg {
-	Init(u32),           // start new game
+	Init(i32),           // start new game
 	TakeControl(SoldierID),
 	QueryStatus,
 	MoveTo(SoldierID, Position),
+}
+
+#[derive(Debug, Copy, Clone, Deserialize, Serialize)]
+pub enum Side {
+	Red,
+	Blue,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct InternalSoldierInfo {
+	pub health: i32,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct FullSoldierInfo {
+	pub internal: InternalSoldierInfo,
+	pub external: SeenSoldierInfo,
+}
+
+#[derive(Debug, Copy, Clone, Deserialize, Serialize)]
+pub struct Direction(pub f64);
+
+pub const MAX_NUM_SOLDIERS: i32 = 64;
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SeenSoldierInfo {
+	pub alive: bool,
+	pub position: Position,
+	pub direction: Direction,
+	pub side: Side,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SensorUpdate {
+	pub insense: Vec<(SoldierID, SeenSoldierInfo)>,
+	pub outsense: Vec<SoldierID>,
+}
+
+impl SensorUpdate {
+	pub fn new() -> SensorUpdate {
+		SensorUpdate {
+			insense: Vec::new(),
+			outsense: Vec::new(),
+		}
+	}
+
+	pub fn add(&mut self, sid: SoldierID, info: SeenSoldierInfo) {
+		self.insense.push((sid, info))
+	}
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum ServerMsg {
 	NewGame(Vec<SoldierID>),    // including list of available soldiers
 	AvailableSoldiers(Vec<SoldierID>),
-	YouNowHaveControl(SoldierID),
-	YourPosition(SoldierID, Position),
-	SoldierSeen(Vec<(SoldierID, Position)>),
+	YouNowHaveControl(SoldierID, FullSoldierInfo),
+	SensorInfo(HashMap<SoldierID, SensorUpdate>),
 }
 

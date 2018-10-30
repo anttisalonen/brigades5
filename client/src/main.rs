@@ -31,7 +31,8 @@ struct Model {
 	canvas: stdweb::web::html_element::CanvasElement,
 	canvas_dimensions: (f64, f64),
 	ctx: stdweb::web::CanvasRenderingContext2d,
-	seen: HashMap<ds::SoldierID, ds::Position>,
+	sid: Option<ds::SoldierID>,
+	seen: HashMap<ds::SoldierID, ds::SeenSoldierInfo>,
 }
 
 enum Msg {
@@ -143,7 +144,8 @@ impl Model {
 		let canv = self.canvas_dimensions.0.min(
 			self.canvas_dimensions.1);
 		let width = canv * 0.05;
-		for (_, pos) in &self.seen {
+		for (_, info) in &self.seen {
+			let pos = info.position;
 			let xp = pos.x / 100.0 * canv * 0.5 + canv * 0.5;
 			let yp = pos.y / 100.0 * canv * 0.5 + canv * 0.5;
 			self.ctx.fill_rect(xp, yp, width, width);
@@ -172,6 +174,7 @@ impl Component for Model {
 			canvas: canv,
 			canvas_dimensions: (1.0, 1.0),
 			ctx: ct,
+			sid: None,
 			seen: HashMap::new(),
 		}
 	}
@@ -239,6 +242,11 @@ impl Component for Model {
 			}
 			Msg::Received(m) => {
 				match m {
+					ds::ServerMsg::NewGame(_) => {
+						self.sid = None;
+						self.seen = HashMap::new();
+						true
+					}
 					ds::ServerMsg::AvailableSoldiers(s) => {
 						if s.len() > 0 {
 							self.link.send_self(Msg::SendGameMsg(
@@ -246,21 +254,28 @@ impl Component for Model {
 						}
 						true
 					}
-					ds::ServerMsg::SoldierSeen(v) => {
-						for (sid, pos) in v {
-							self.seen.insert(sid, pos);
+					ds::ServerMsg::SensorInfo(v) => {
+						if let Some(mysid) = self.sid {
+							let inf = v.get(&mysid);
+							match inf {
+								Some(upd) => {
+									for (sid, ins) in upd.insense.iter() {
+										self.seen.insert(sid.to_owned(), ins.to_owned());
+									}
+									for out in upd.outsense.iter() {
+										self.seen.remove(&out);
+									}
+								}
+								None => ()
+							}
+							self.update_canvas();
 						}
-						self.update_canvas();
 						false
 					}
-					ds::ServerMsg::YourPosition(sid, pos) => {
-						self.seen.insert(sid, pos);
-						self.update_canvas();
+					ds::ServerMsg::YouNowHaveControl(sid, info) => {
+						self.sid = Some(sid);
+						self.seen.insert(sid, info.external);
 						false
-					}
-					_ => {
-						self.server_data.push_str(&format!("{:?}\n", &m));
-						true
 					}
 				}
 			}

@@ -82,10 +82,10 @@ impl ws::Handler for Client {
 							self.out.close(CloseCode::Normal)
 						}
 					}
-					Ok(ds::ServerMsg::YouNowHaveControl(sid)) => {
+					Ok(ds::ServerMsg::YouNowHaveControl(sid, info)) => {
 						self.agents.push(Agent {
 							sid: sid,
-							pos: ds::Position::new(0.0, 0.0),
+							pos: info.external.position,
 							seen: vec![],
 						});
 						self.send(ds::GameMsg::MoveTo(sid,
@@ -94,21 +94,29 @@ impl ws::Handler for Client {
 										      y: 0.0
 									      }))
 					}
-					Ok(ds::ServerMsg::YourPosition(sid, pos)) => {
-						self.update_agent(sid, |a| {
-							a.pos = pos;
-						});
-						if pos.dist(&ds::Position {
-							x: 5.0,
-							y: 0.0
-						}) < 1.0 {
+					Ok(ds::ServerMsg::SensorInfo(upd)) => {
+						let mut closing = false;
+						for (seer, info) in upd {
+							for (seenid, seeninfo) in info.insense {
+								let pos = seeninfo.position;
+								if seenid == seer {
+									self.update_agent(seer, |a| {
+										a.pos = pos;
+									});
+									if pos.dist(&ds::Position {
+										x: 5.0,
+										y: 0.0
+									}) < 1.0 {
+										closing = true;
+									}
+								}
+							}
+						}
+						if closing {
 							self.out.close(CloseCode::Normal)
 						} else {
 							std::result::Result::Ok(())
 						}
-					}
-					Ok(ds::ServerMsg::SoldierSeen(ss)) => {
-						Ok(())
 					}
 					Err(e) => {
 						println!("Error: {:?}\n", e);

@@ -26,8 +26,8 @@ impl Handler<UpdateMessage> for ChatServer {
 
 	fn handle(&mut self, _msg: UpdateMessage, _ctx: &mut Context<Self>) -> Self::Result {
 		let msgs = self.game.tick(UPDATE_INTERVAL);
-		for msg in msgs.into_iter() {
-			msg.0.do_send(ServerMsg { msg: msg.1 });
+		for (recp, msg) in msgs {
+			recp.do_send(ServerMsg { msg: msg });
 		}
 	}
 }

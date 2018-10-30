@@ -13,3 +13,4 @@ geo = "0.10.*"
 ds = { path = "../ds" }
 rmp-serde = "*"
 serde = "*"
+rand = "*"
