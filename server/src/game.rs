@@ -44,6 +44,7 @@ impl DetectionTable {
 struct Soldier {
 	id: ds::SoldierID,
 	pos: ds::Position,
+	dir: ds::Direction,
 	alive: bool,
 	moving: Option<ds::Position>,
 }
@@ -53,6 +54,7 @@ impl Soldier {
 		Soldier {
 			id: SoldierID(0),
 			pos: ds::Position { x: 0.0, y: 0.0 },
+			dir: ds::Direction(0.0),
 			alive: false,
 			moving: None,
 		}
@@ -74,7 +76,9 @@ impl Soldier {
 		if self.pos.dist(&tgtpos) < 1.0 {
 			self.moving = None;
 		} else {
-			self.pos.add(self.pos.to_pos(&tgtpos).normalized(), WALKING_SPEED, time);
+			let diff = self.pos.to_pos(&tgtpos).normalized();
+			self.pos.add(diff, WALKING_SPEED, time);
+			self.dir = ds::Direction(diff.y.atan2(diff.x));
 		}
 		self.construct_sensor_info()
 	}
@@ -83,7 +87,7 @@ impl Soldier {
 		ds::SeenSoldierInfo {
 			alive: true,
 			position: self.pos,
-			direction: ds::Direction(0.0),
+			direction: self.dir,
 			side: ds::Side::Blue
 		}
 	}
@@ -111,9 +115,9 @@ impl GameState {
 			s[i as usize].id = SoldierID(i);
 			controllers.push(None);
 		}
-		for i in 1..4 {
-			let x: f64 = rand::random::<f64>() * 200.0;
-			let y: f64 = rand::random::<f64>() * 200.0;
+		for i in 0..4 {
+			let x: f64 = 10.0 * i as f64 + 30.0;
+			let y: f64 = 10.0 * i as f64 + 30.0;
 			s[i as usize].alive = true;
 			s[i as usize].pos = ds::Position::new(x, y);
 		}

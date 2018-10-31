@@ -83,7 +83,7 @@ pub struct FullSoldierInfo {
 	pub external: SeenSoldierInfo,
 }
 
-#[derive(Debug, Copy, Clone, Deserialize, Serialize)]
+#[derive(PartialEq, Debug, Copy, Clone, Deserialize, Serialize)]
 pub struct Direction(pub f64);
 
 pub const MAX_NUM_SOLDIERS: i32 = 64;

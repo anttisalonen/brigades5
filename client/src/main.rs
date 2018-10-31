@@ -30,7 +30,9 @@ struct Model {
 	server_data: String,             // data received from the server
 	canvas: stdweb::web::html_element::CanvasElement,
 	canvas_dimensions: (f64, f64),
+	canvas_scale: f64, // pixels to server units (meters)
 	ctx: stdweb::web::CanvasRenderingContext2d,
+	view_center: ds::Position,
 	sid: Option<ds::SoldierID>,
 	seen: HashMap<ds::SoldierID, ds::SeenSoldierInfo>,
 }
@@ -44,6 +46,7 @@ enum Msg {
 	Received(ds::ServerMsg),          // data received from server
 	ReceivedError(String),
 	SendGameMsg(ds::GameMsg),
+	CanvasClick(ClickEvent),
 }
 
 fn text_to_gamemsg(text: &String) -> Option<ds::GameMsg> {
@@ -133,6 +136,7 @@ impl Model {
 		self.canvas = canv;
 		self.ctx = ct;
 		self.canvas_dimensions = (client_width as f64, client_height as f64);
+		self.canvas_scale = 0.05;
 	}
 
 	fn update_canvas(&self) {
@@ -144,11 +148,39 @@ impl Model {
 		let canv = self.canvas_dimensions.0.min(
 			self.canvas_dimensions.1);
 		let width = canv * 0.05;
+		let edge_x = self.view_center.x - (self.canvas_dimensions.0 * self.canvas_scale) * 0.5;
+		let edge_y = self.view_center.y - (self.canvas_dimensions.1 * self.canvas_scale) * 0.5;
 		for (_, info) in &self.seen {
-			let pos = info.position;
-			let xp = pos.x / 100.0 * canv * 0.5 + canv * 0.5;
-			let yp = pos.y / 100.0 * canv * 0.5 + canv * 0.5;
-			self.ctx.fill_rect(xp, yp, width, width);
+			self.draw_soldier(info, width, edge_x, edge_y);
+		}
+	}
+
+	fn draw_soldier(&self, info: &ds::SeenSoldierInfo, width: f64, edge_x: f64, edge_y: f64) {
+		let pos = info.position;
+		let xp = (pos.x - edge_x) / self.canvas_scale;
+		let yp = (pos.y - edge_y) / self.canvas_scale;
+		let ds::Direction(dir) = info.direction;
+		let dirx = dir.cos() * width * 0.5;
+		let diry = dir.sin() * width * 0.5;
+		self.ctx.begin_path();
+		self.ctx.move_to(xp + dirx, yp + diry);
+		self.ctx.line_to(xp - diry, yp + dirx);
+		self.ctx.line_to(xp + diry, yp - dirx);
+		self.ctx.fill(stdweb::web::FillRule::NonZero);
+	}
+
+	fn canvas_event(&mut self, ev: ClickEvent) {
+		let xo = ev.offset_x();
+		let yo = ev.offset_y();
+		let xp = (xo - self.canvas_dimensions.0 * 0.5) * self.canvas_scale + self.view_center.x;
+		let yp = (yo - self.canvas_dimensions.1 * 0.5) * self.canvas_scale + self.view_center.y;
+		self.console.log(&format!("xo: {}, yo: {}", xo, yo));
+		self.console.log(&format!("xp: {}, yp: {}", xp, yp));
+		if let Some(sid) = self.sid {
+			if let Some(ref mut task) = self.ws {
+				let msg = ds::GameMsg::MoveTo(sid, ds::Position::new(xp, yp));
+				task.send_binary(MsgPack(&msg));
+			}
 		}
 	}
 }
@@ -173,7 +205,9 @@ impl Component for Model {
 			server_data: String::new(),
 			canvas: canv,
 			canvas_dimensions: (1.0, 1.0),
+			canvas_scale: 1.0,
 			ctx: ct,
+			view_center: ds::Position::new(0.0, 0.0),
 			sid: None,
 			seen: HashMap::new(),
 		}
@@ -240,6 +274,10 @@ impl Component for Model {
 				self.server_data.push_str(&format!("{:?}\n", &m));
 				true
 			}
+			Msg::CanvasClick(e) => {
+				self.canvas_event(e);
+				false
+			}
 			Msg::Received(m) => {
 				match m {
 					ds::ServerMsg::NewGame(_) => {
@@ -274,6 +312,7 @@ impl Component for Model {
 					}
 					ds::ServerMsg::YouNowHaveControl(sid, info) => {
 						self.sid = Some(sid);
+						self.view_center = info.external.position.clone();
 						self.seen.insert(sid, info.external);
 						false
 					}
@@ -300,7 +339,7 @@ impl Renderable<Model> for Model {
 	fn view(&self) -> Html<Self> {
 		html! {
 			<div id="main",>
-			<canvas id="viewport",></canvas><br/>
+			<canvas id="viewport", onclick=|e| Msg::CanvasClick(e),></canvas><br/>
 			// text showing whether we're connected or not
 			<p>{ "Connected: " } { !self.ws.is_none() } </p><br/>
 			// input box for sending text
